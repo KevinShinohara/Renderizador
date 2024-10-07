@@ -6,7 +6,7 @@
 """
 Biblioteca Gráfica / Graphics Library.
  
-Desenvolvido por: <SEU NOME AQUI>
+Desenvolvido por: <Kevin Nagayuki Shinohara>
 Disciplina: Computação Gráfica
 Data: <DATA DE INÍCIO DA IMPLEMENTAÇÃO>
 """
@@ -24,7 +24,7 @@ class GL:
     near = 0.01   # plano de corte próximo
     far = 1000    # plano de corte distante
     matrizes = {'transform_in': [np.identity(4)], 'viewpoint': np.identity(4), 'perspective': np.identity(4)}
- 
+    current_texture = None
     # Buffers para supersampling e Z-buffer
     super_buffer = None
     z_buffer = None
@@ -46,6 +46,19 @@ class GL:
         GL.super_height = GL.height * GL.supersampling_factor
         GL.super_buffer = np.zeros((GL.super_height, GL.super_width, 3), dtype=np.uint8)
         GL.z_buffer = np.full((GL.super_height, GL.super_width), 1.0)
+
+    def compute_barycentric_coordinates(tri, x, y):
+        x1, y1 = tri[0], tri[1]
+        x2, y2 = tri[3], tri[4]
+        x3, y3 = tri[6], tri[7]
+        denominator = ((y2 - y3)*(x1 - x3) + (x3 - x2)*(y1 - y3))
+        if denominator == 0:
+            return None  # Evitar divisão por zero
+        alpha = ((y2 - y3)*(x - x3) + (x3 - x2)*(y - y3)) / denominator
+        beta = ((y3 - y1)*(x - x3) + (x1 - x3)*(y - y3)) / denominator
+        gamma = 1 - alpha - beta
+        return alpha, beta, gamma
+
  
     @staticmethod
     def downsample():
@@ -143,7 +156,7 @@ class GL:
         # cuidado com as cores, o X3D especifica de (0,1) e o Framebuffer de (0,255)
  
     @staticmethod
-    def triangleSet2D(vertices, colors, vertex_colors=None, z_values=None):
+    def triangleSet2D(vertices, colors, vertex_colors=None, z_values=None,tex_coords=None):
         """Função usada para renderizar TriangleSet2D."""
         # https://www.web3d.org/specifications/X3Dv4/ISO-IEC19775-1v4-IS/Part01/components/geometry2D.html#TriangleSet2D
         # Nessa função você receberá os vertices de um triângulo no parâmetro vertices,
@@ -153,7 +166,8 @@ class GL:
         # quantidade de pontos é sempre multiplo de 3, ou seja, 6 valores ou 12 valores, etc.
         # O parâmetro colors é um dicionário com os tipos cores possíveis, para o TriangleSet2D
         # você pode assumir inicialmente o desenho das linhas com a cor emissiva (emissiveColor).
-        
+        # print()
+
         emissive_color = [int(c * 255) for c in colors.get('emissiveColor', [1, 1, 1])]
         transparency = colors.get('transparency', 0)
         opacity = 1 - transparency
@@ -161,11 +175,20 @@ class GL:
         factor = GL.supersampling_factor
 
         # Processa cada triângulo
-        for i in range(0, len(vertices) - 5, 6):
+        num_vertices = len(vertices)
+        for i in range(0, num_vertices - 5, 6):
             # Extrai vértices do triângulo
             x0, y0 = vertices[i], vertices[i + 1]
             x1, y1 = vertices[i + 2], vertices[i + 3]
             x2, y2 = vertices[i + 4], vertices[i + 5]
+
+            # Coordenadas de textura (se disponíveis)
+            if tex_coords:
+                u0, v0 = tex_coords[i // 2]
+                u1, v1 = tex_coords[(i // 2) + 1]
+                u2, v2 = tex_coords[(i // 2) + 2]
+            else:
+                u0 = v0 = u1 = v1 = u2 = v2 = 0  # Valores padrão
 
             # Verifica se há cores por vértice suficientes
             if vertex_colors and len(vertex_colors) >= ((i // 6) * 9) + 9:
@@ -176,7 +199,6 @@ class GL:
             else:
                 c0 = c1 = c2 = emissive_color
 
-            # Z-values
             if z_values and len(z_values) >= (i // 6) * 3 + 3:
                 z0 = z_values[(i // 6) * 3]
                 z1 = z_values[(i // 6) * 3 + 1]
@@ -184,38 +206,29 @@ class GL:
             else:
                 z0 = z1 = z2 = 0
 
-            # Coordenadas de supersampling (ajuste)
             x0_s, y0_s = int(round(x0 * factor)), int(round(y0 * factor))
             x1_s, y1_s = int(round(x1 * factor)), int(round(y1 * factor))
             x2_s, y2_s = int(round(x2 * factor)), int(round(y2 * factor))
 
-            # Calcula a bounding box
             min_x = max(min(x0_s, x1_s, x2_s), 0)
             max_x = min(max(x0_s, x1_s, x2_s), GL.super_width - 1)
             min_y = max(min(y0_s, y1_s, y2_s), 0)
             max_y = min(max(y0_s, y1_s, y2_s), GL.super_height - 1)
 
-            # Precalcula áreas para coordenadas baricêntricas (ajuste)
-            area = ((y1_s - y2_s) * (x0_s - x2_s) - (x1_s - x2_s) * (y0_s - y2_s))
-            if area == 0:
+            denom = ((y1_s - y2_s)*(x0_s - x2_s) + (x2_s - x1_s)*(y0_s - y2_s))
+            if denom == 0:
                 continue  # Triângulo degenerado
 
             # Itera sobre a bounding box
             for y in range(min_y, max_y + 1):
                 for x in range(min_x, max_x + 1):
-                    # Calcula coordenadas baricêntricas
-                    w0 = ((y1_s - y2_s) * (x - x2_s) - (x1_s - x2_s) * (y - y2_s)) / area
-                    w1 = ((y2_s - y0_s) * (x - x2_s) - (x2_s - x0_s) * (y - y2_s)) / area
+
+                    w0 = ((y1_s - y2_s)*(x - x2_s) + (x2_s - x1_s)*(y - y2_s)) / denom
+                    w1 = ((y2_s - y0_s)*(x - x2_s) + (x0_s - x2_s)*(y - y2_s)) / denom
                     w2 = 1 - w0 - w1
 
                     # Verifica se o ponto está dentro do triângulo
                     if w0 >= 0 and w1 >= 0 and w2 >= 0:
-                        # Interpola cor
-                        r = w0 * c0[0] + w1 * c1[0] + w2 * c2[0]
-                        g = w0 * c0[1] + w1 * c1[1] + w2 * c2[1]
-                        b = w0 * c0[2] + w1 * c1[2] + w2 * c2[2]
-                        color = [int(r), int(g), int(b)]
-
                         # Interpola Z
                         z = w0 * z0 + w1 * z1 + w2 * z2
 
@@ -223,7 +236,31 @@ class GL:
                         if z < GL.z_buffer[y, x]:
                             GL.z_buffer[y, x] = z
 
-                            # Blending com transparência
+                            # Interpola cor ou textura
+                            if tex_coords and GL.current_texture is not None:
+                                # Interpola coordenadas de textura
+                                u = w0 * u0 + w1 * u1 + w2 * u2
+                                v = w0 * v0 + w1 * v1 + w2 * v2
+
+                                # Mapear (u, v) para coordenadas de pixel na textura
+                                tex_width = GL.current_texture.shape[1]
+                                tex_height = GL.current_texture.shape[0]
+                                tex_x = int((v) * (tex_width - 1))
+                                tex_y = int((1-u)  * (tex_height - 1))
+
+                                # Garantir que as coordenadas estejam dentro dos limites
+                                tex_x = np.clip(tex_x, 0, tex_width - 1)
+                                tex_y = np.clip(tex_y, 0, tex_height - 1)
+
+                                # Obter a cor do pixel da textura
+                                color = GL.current_texture[tex_y, tex_x][:3]
+                            else:
+                                # Interpola cor
+                                r = w0 * c0[0] + w1 * c1[0] + w2 * c2[0]
+                                g = w0 * c0[1] + w1 * c1[1] + w2 * c2[1]
+                                b = w0 * c0[2] + w1 * c1[2] + w2 * c2[2]
+                                color = [int(r), int(g), int(b)]
+
                             existing_color = GL.super_buffer[y, x]
                             blended_color = [
                                 int(opacity * color[0] + transparency * existing_color[0]),
@@ -231,10 +268,9 @@ class GL:
                                 int(opacity * color[2] + transparency * existing_color[2]),
                             ]
 
-                            # Atualiza o super buffer
                             GL.super_buffer[y, x] = blended_color
 
-        # Realiza o downsampling após processar todos os triângulos
+
         GL.downsample()
     
     @staticmethod
@@ -254,6 +290,10 @@ class GL:
         x_tela = (x_ndc + 1) * GL.width * 0.5
         y_tela = (1 - y_ndc) * GL.height * 0.5
         z_depth = (z_ndc + 1) * 0.5  
+
+        # print(f"Vértice original: {point}")
+        # print(f"Vértice transformado: x={x_tela}, y={y_tela}, z={z_depth}")
+
         return [x_tela, y_tela, z_depth]
  
     @staticmethod
@@ -288,8 +328,9 @@ class GL:
             transformed = GL.transform_point(point[i:i + 3])
             vertices.extend([transformed[0], transformed[1]])
             z_values.append(transformed[2])
- 
-        # Passa cores por vértice se disponíveis
+        # print(f"Vértices dos triângulos (2D): {vertices}")
+        # print(f"Valores de profundidade (Z): {z_values}")
+
         GL.triangleSet2D(vertices, colors, vertex_colors, z_values)
  
     @staticmethod
@@ -527,24 +568,34 @@ class GL:
  
         # Os prints abaixo são só para vocês verificarem o funcionamento, DEVE SER REMOVIDO.
  
+        if current_texture:
+            GL.current_texture = gpu.GPU.load_texture(current_texture[0])
+            GL.current_texture = np.flipud(GL.current_texture)
+
         GL.colorPerVertex = colorPerVertex
         vertex_colors = color if colorPerVertex and color is not None else None
 
         i = 0
         while i < len(coordIndex):
             face_indices = []
+            tex_indices = []
             while i < len(coordIndex) and coordIndex[i] != -1:
                 face_indices.append(coordIndex[i])
+                if texCoordIndex:
+                    tex_indices.append(texCoordIndex[i])
                 i += 1
-            i += 1  
+            i += 1 
 
             for j in range(1, len(face_indices) - 1):
-                idxs = [face_indices[0], face_indices[j], face_indices[j + 1]]
+                idxs = [face_indices[0], face_indices[j + 1], face_indices[j]]
+
+                tex_idxs = [face_indices[0], face_indices[j + 1], face_indices[j]] if tex_indices else None
 
                 triangle_vertices = []
                 z_values = []
                 vertex_colors_list = []
-                for idx in idxs:
+                tex_coords_list = []
+                for idx, tex_idx in zip(idxs, tex_idxs) if tex_indices else zip(idxs, [None]*3):
                     v = coord[idx * 3: idx * 3 + 3]
                     transformed = GL.transform_point(v)
                     triangle_vertices.extend([transformed[0], transformed[1]])
@@ -558,10 +609,17 @@ class GL:
                         vc = vertex_colors[color_idx: color_idx + 3]
                         vertex_colors_list.extend(vc)
                     else:
-                        # Use default emissive color
                         vertex_colors_list = None
 
-                GL.triangleSet2D(triangle_vertices, colors, vertex_colors_list, z_values)
+                    if texCoord and texCoordIndex and tex_idx is not None:
+                        u = texCoord[tex_idx * 2]
+                        v = texCoord[tex_idx * 2 + 1]
+                        v = 1 - v 
+                        tex_coords_list.append((u, v))
+                    else:
+                        tex_coords_list = None
+
+                GL.triangleSet2D(triangle_vertices, colors, vertex_colors_list, z_values, tex_coords_list)
                 
  
     @staticmethod
