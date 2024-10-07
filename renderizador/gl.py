@@ -45,7 +45,7 @@ class GL:
         GL.super_width = GL.width * GL.supersampling_factor
         GL.super_height = GL.height * GL.supersampling_factor
         GL.super_buffer = np.zeros((GL.super_height, GL.super_width, 3), dtype=np.uint8)
-        GL.z_buffer = np.full((GL.super_height, GL.super_width), -np.inf)
+        GL.z_buffer = np.full((GL.super_height, GL.super_width), 1.0)
  
     @staticmethod
     def downsample():
@@ -153,7 +153,8 @@ class GL:
         # quantidade de pontos é sempre multiplo de 3, ou seja, 6 valores ou 12 valores, etc.
         # O parâmetro colors é um dicionário com os tipos cores possíveis, para o TriangleSet2D
         # você pode assumir inicialmente o desenho das linhas com a cor emissiva (emissiveColor).
- 
+        print(vertices)
+        print(vertex_colors)
         emissive_color = [int(c * 255) for c in colors.get('emissiveColor', [1, 1, 1])]
         transparency = colors.get('transparency', 0)
         opacity = 1 - transparency
@@ -177,9 +178,9 @@ class GL:
  
             # Z-values
             if z_values:
-                z0 = z_values[i // 2]
-                z1 = z_values[i // 2 + 1]
-                z2 = z_values[i // 2 + 2]
+                z0 = z_values[(i // 6) * 3]
+                z1 = z_values[(i // 6) * 3 + 1]
+                z2 = z_values[(i // 6) * 3 + 2]
             else:
                 z0 = z1 = z2 = 0
  
@@ -219,7 +220,7 @@ class GL:
                         z = w0 * z0 + w1 * z1 + w2 * z2
  
                         # Teste do Z-buffer
-                        if z > GL.z_buffer[y, x]:
+                        if z < GL.z_buffer[y, x]:
                             GL.z_buffer[y, x] = z
  
                             # Blending com transparência
@@ -250,7 +251,8 @@ class GL:
         z_ndc = ponto_normalizado[2]
         x_tela = (x_ndc + 1) * GL.width * 0.5
         y_tela = (1 - y_ndc) * GL.height * 0.5
-        return [x_tela, y_tela, z_ndc]
+        z_depth = (z_ndc + 1) * 0.5  
+        return [x_tela, y_tela, z_depth]
  
     @staticmethod
     def triangleSet(point, colors, vertex_colors=None):
@@ -554,10 +556,9 @@ class GL:
                         vc = vertex_colors[color_idx: color_idx + 3]
                         vertex_colors_list.extend(vc)
  
-                if GL.colorPerVertex:
-                    GL.triangleSet2D(triangle_vertices, colors, vertex_colors_list, z_values)
-                else:
-                    GL.triangleSet2D(triangle_vertices, colors, None, z_values)
+                
+                GL.triangleSet2D(triangle_vertices, colors, vertex_colors_list, z_values)
+                
  
     @staticmethod
     def box(size, colors):
