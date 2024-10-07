@@ -5,26 +5,34 @@
 
 """
 Biblioteca Gráfica / Graphics Library.
-
+ 
 Desenvolvido por: <SEU NOME AQUI>
 Disciplina: Computação Gráfica
 Data: <DATA DE INÍCIO DA IMPLEMENTAÇÃO>
 """
-
+ 
 import time         # Para operações com tempo
 import gpu          # Simula os recursos de uma GPU
 import math         # Funções matemáticas
 import numpy as np  # Biblioteca do Numpy
-
+ 
 class GL:
     """Classe que representa a biblioteca gráfica (Graphics Library)."""
-
+ 
     width = 800   # largura da tela
     height = 600  # altura da tela
     near = 0.01   # plano de corte próximo
     far = 1000    # plano de corte distante
-    matrizes = {'transform_in': [np.identity(4)], 'viewpoint': [np.identity(4)], 'perspective': [np.identity(4)]}
-
+    matrizes = {'transform_in': [np.identity(4)], 'viewpoint': np.identity(4), 'perspective': np.identity(4)}
+ 
+    # Buffers para supersampling e Z-buffer
+    super_buffer = None
+    z_buffer = None
+    supersampling_factor = 2  # Fator de supersampling
+ 
+    # Controle de cores por vértice
+    colorPerVertex = False
+ 
     @staticmethod
     def setup(width, height, near=0.01, far=1000):
         """Definr parametros para câmera de razão de aspecto, plano próximo e distante."""
@@ -32,39 +40,40 @@ class GL:
         GL.height = height
         GL.near = near
         GL.far = far
-
+ 
+        # Inicializa o super buffer e o Z-buffer com o fator de supersampling
+        GL.super_width = GL.width * GL.supersampling_factor
+        GL.super_height = GL.height * GL.supersampling_factor
+        GL.super_buffer = np.zeros((GL.super_height, GL.super_width, 3), dtype=np.uint8)
+        GL.z_buffer = np.full((GL.super_height, GL.super_width), -np.inf)
+ 
+    @staticmethod
+    def downsample():
+        """Função para realizar o downsampling do super_buffer para o tamanho da tela."""
+ 
+        factor = GL.supersampling_factor
+        for y in range(GL.height):
+            for x in range(GL.width):
+                # Média das cores do super buffer
+                super_y = y * factor
+                super_x = x * factor
+                region = GL.super_buffer[super_y:super_y + factor, super_x:super_x + factor]
+                color = np.mean(region, axis=(0, 1)).astype(np.uint8)
+                # Desenha o pixel na tela
+                gpu.GPU.draw_pixel([x, y], gpu.GPU.RGB8, color.tolist())
+ 
     @staticmethod
     def polypoint2D(point, colors):
         """Função usada para renderizar Polypoint2D."""
-        # https://www.web3d.org/specifications/X3Dv4/ISO-IEC19775-1v4-IS/Part01/components/geometry2D.html#Polypoint2D
-        # Nessa função você receberá pontos no parâmetro point, esses pontos são uma lista
-        # de pontos x, y sempre na ordem. Assim point[0] é o valor da coordenada x do
-        # primeiro ponto, point[1] o valor y do primeiro ponto. Já point[2] é a
-        # coordenada x do segundo ponto e assim por diante. Assuma a quantidade de pontos
-        # pelo tamanho da lista e assuma que sempre vira uma quantidade par de valores.
-        # O parâmetro colors é um dicionário com os tipos cores possíveis, para o Polypoint2D
-        # você pode assumir inicialmente o desenho dos pontos com a cor emissiva (emissiveColor).
-
-        # O print abaixo é só para vocês verificarem o funcionamento, DEVE SER REMOVIDO.
-        #Encontrando a cor
-        lista_rgb = colors['emissiveColor']     
-        for c in range(len(lista_rgb)):
-            lista_rgb[c] = int(round(lista_rgb[c]*255))
-
-        #Encontrando os pontos
-
-        for i in range(0,len(point),2): 
+        # Encontrando a cor
+        lista_rgb = [int(round(c * 255)) for c in colors['emissiveColor']]
+ 
+        # Encontrando os pontos
+        for i in range(0, len(point), 2):
             pos_x = int(point[i])
-            pos_y = int(point[i+1])
-            gpu.GPU.draw_pixel([pos_x, pos_y], gpu.GPU.RGB8, lista_rgb) 
-
-
-        # Exemplo:
-        # pos_x = GL.width//2
-        # pos_y = GL.height//2
-        # gpu.GPU.draw_pixel([pos_x, pos_y], gpu.GPU.RGB8, [255, 0, 0])  # altera pixel (u, v, tipo, r, g, b)
-        # cuidado com as cores, o X3D especifica de (0,1) e o Framebuffer de (0,255)
-        
+            pos_y = int(point[i + 1])
+            gpu.GPU.draw_pixel([pos_x, pos_y], gpu.GPU.RGB8, lista_rgb)
+ 
     @staticmethod
     def polyline2D(lineSegments, colors):
         """Função usada para renderizar Polyline2D."""
@@ -80,49 +89,41 @@ class GL:
         # você pode assumir inicialmente o desenho das linhas com a cor emissiva (emissiveColor).
         # Função auxiliar para desenhar uma linha entre dois pontos (x0, y0) e (x1, y1)
         points_to_draw = []
-
+ 
         # Itera pelos pares de pontos na lista lineSegments
         for i in range(0, len(lineSegments) - 2, 2):
             x0 = int(lineSegments[i])
             y0 = int(lineSegments[i + 1])
             x1 = int(lineSegments[i + 2])
             y1 = int(lineSegments[i + 3])
-
+ 
             # Diferenças absolutas
             dx = abs(x1 - x0)
             dy = abs(y1 - y0)
-
+ 
             # Determina as direções dos incrementos
             sx = 1 if x0 < x1 else -1
             sy = 1 if y0 < y1 else -1
-
+ 
             # Inicializa o erro
             err = dx - dy
-
+ 
             # Algoritmo de Bresenham para rasterização de linhas
             for _ in range(max(dx, dy) + 1):
                 # Adiciona o ponto atual à lista
                 points_to_draw.extend([x0, y0])
-
-                # Verifica se chegou ao final da linha
                 if x0 == x1 and y0 == y1:
                     break
-
                 e2 = 2 * err
-
-                # Ajusta o erro e as coordenadas conforme necessário
                 if e2 > -dy:
                     err -= dy
                     x0 += sx
                 if e2 < dx:
                     err += dx
                     y0 += sy
-
+ 
         # Chama a função polypoint2D com os pontos acumulados e as cores
         GL.polypoint2D(points_to_draw, colors)
-
-
-
     @staticmethod
     def circle2D(radius, colors):
         """Função usada para renderizar Circle2D."""
@@ -131,19 +132,18 @@ class GL:
         # um círculo.
         # O parâmetro colors é um dicionário com os tipos cores possíveis, para o Circle2D
         # você pode assumir o desenho das linhas com a cor emissiva (emissiveColor).
-
+ 
         print("Circle2D : radius = {0}".format(radius)) # imprime no terminal
         print("Circle2D : colors = {0}".format(colors)) # imprime no terminal as cores
-        
+       
         # Exemplo:
         pos_x = GL.width//2
         pos_y = GL.height//2
         gpu.GPU.draw_pixel([pos_x, pos_y], gpu.GPU.RGB8, [255, 0, 255])  # altera pixel (u, v, tipo, r, g, b)
         # cuidado com as cores, o X3D especifica de (0,1) e o Framebuffer de (0,255)
-
-
+ 
     @staticmethod
-    def triangleSet2D(vertices, colors):
+    def triangleSet2D(vertices, colors, vertex_colors=None, z_values=None):
         """Função usada para renderizar TriangleSet2D."""
         # https://www.web3d.org/specifications/X3Dv4/ISO-IEC19775-1v4-IS/Part01/components/geometry2D.html#TriangleSet2D
         # Nessa função você receberá os vertices de um triângulo no parâmetro vertices,
@@ -153,54 +153,107 @@ class GL:
         # quantidade de pontos é sempre multiplo de 3, ou seja, 6 valores ou 12 valores, etc.
         # O parâmetro colors é um dicionário com os tipos cores possíveis, para o TriangleSet2D
         # você pode assumir inicialmente o desenho das linhas com a cor emissiva (emissiveColor).
-        color = []
-        for value in colors['emissiveColor']:
-            color.append(int(value*255))
-        
-        
-
-        # Itera sobre cada triângulo definido na lista de vértices
+ 
+        emissive_color = [int(c * 255) for c in colors.get('emissiveColor', [1, 1, 1])]
+        transparency = colors.get('transparency', 0)
+        opacity = 1 - transparency
+ 
+        factor = GL.supersampling_factor
+ 
+        # Processa cada triângulo
         for i in range(0, len(vertices) - 5, 6):
-            # Obtemos os vértices do triângulo
-            x0, y0 = int(vertices[i]), int(vertices[i + 1])
-            x1, y1 = int(vertices[i + 2]), int(vertices[i + 3])
-            x2, y2 = int(vertices[i + 4]), int(vertices[i + 5])
-
-            # Ordena os vértices pelo eixo y (y0 <= y1 <= y2)
-            if y0 > y1:
-                x0, y0, x1, y1 = x1, y1, x0, y0
-            if y0 > y2:
-                x0, y0, x2, y2 = x2, y2, x0, y0
-            if y1 > y2:
-                x1, y1, x2, y2 = x2, y2, x1, y1
-
-            # Função para interpolar a borda esquerda e direita do triângulo
-            def interpolate(y, y0, y1, x0, x1):
-                if y1 == y0:
-                    return x0
-                return int(x0 + (x1 - x0) * ((y - y0) / (y1 - y0)))
-
-            # Varredura de linha para a parte superior do triângulo
-            for y in range(y0, y1 + 1):
-                xa = interpolate(y, y0, y2, x0, x2)
-                xb = interpolate(y, y0, y1, x0, x1)
-                if xa > xb:
-                    xa, xb = xb, xa
-                for x in range(xa, xb + 1):
-                    gpu.GPU.draw_pixel([x, y], gpu.GPU.RGB8,  color) 
-
-            # Varredura de linha para a parte inferior do triângulo
-            for y in range(y1, y2 + 1):
-                xa = interpolate(y, y0, y2, x0, x2)
-                xb = interpolate(y, y1, y2, x1, x2)
-                if xa > xb:
-                    xa, xb = xb, xa
-                for x in range(xa, xb + 1):
-                    
-                    gpu.GPU.draw_pixel([x, y], gpu.GPU.RGB8, color) 
-
+            # Extrai vértices do triângulo
+            x0, y0 = vertices[i], vertices[i + 1]
+            x1, y1 = vertices[i + 2], vertices[i + 3]
+            x2, y2 = vertices[i + 4], vertices[i + 5]
+ 
+            # Se cores por vértice forem fornecidas
+            if vertex_colors:
+                c0 = [int(c * 255) for c in vertex_colors[i:i + 3]]
+                c1 = [int(c * 255) for c in vertex_colors[i + 3:i + 6]]
+                c2 = [int(c * 255) for c in vertex_colors[i + 6:i + 9]]
+            else:
+                c0 = c1 = c2 = emissive_color
+ 
+            # Z-values
+            if z_values:
+                z0 = z_values[i // 2]
+                z1 = z_values[i // 2 + 1]
+                z2 = z_values[i // 2 + 2]
+            else:
+                z0 = z1 = z2 = 0
+ 
+            # Coordenadas de supersampling
+            x0_s, y0_s = int(x0 * factor), int(y0 * factor)
+            x1_s, y1_s = int(x1 * factor), int(y1 * factor)
+            x2_s, y2_s = int(x2 * factor), int(y2 * factor)
+ 
+            # Calcula a bounding box
+            min_x = max(min(x0_s, x1_s, x2_s), 0)
+            max_x = min(max(x0_s, x1_s, x2_s), GL.super_width - 1)
+            min_y = max(min(y0_s, y1_s, y2_s), 0)
+            max_y = min(max(y0_s, y1_s, y2_s), GL.super_height - 1)
+ 
+            # Precalcula áreas para coordenadas baricêntricas
+            area = ((y1_s - y2_s) * (x0_s - x2_s) + (x2_s - x1_s) * (y0_s - y2_s))
+            if area == 0:
+                continue  # Triângulo degenerado
+ 
+            # Itera sobre a bounding box
+            for y in range(min_y, max_y + 1):
+                for x in range(min_x, max_x + 1):
+                    # Calcula coordenadas baricêntricas
+                    w0 = ((y1_s - y2_s) * (x - x2_s) + (x2_s - x1_s) * (y - y2_s)) / area
+                    w1 = ((y2_s - y0_s) * (x - x2_s) + (x0_s - x2_s) * (y - y2_s)) / area
+                    w2 = 1 - w0 - w1
+ 
+                    # Verifica se o ponto está dentro do triângulo
+                    if w0 >= 0 and w1 >= 0 and w2 >= 0:
+                        # Interpola cor
+                        r = w0 * c0[0] + w1 * c1[0] + w2 * c2[0]
+                        g = w0 * c0[1] + w1 * c1[1] + w2 * c2[1]
+                        b = w0 * c0[2] + w1 * c1[2] + w2 * c2[2]
+                        color = [int(r), int(g), int(b)]
+ 
+                        # Interpola Z
+                        z = w0 * z0 + w1 * z1 + w2 * z2
+ 
+                        # Teste do Z-buffer
+                        if z > GL.z_buffer[y, x]:
+                            GL.z_buffer[y, x] = z
+ 
+                            # Blending com transparência
+                            existing_color = GL.super_buffer[y, x]
+                            blended_color = [
+                                int(opacity * color[0] + transparency * existing_color[0]),
+                                int(opacity * color[1] + transparency * existing_color[1]),
+                                int(opacity * color[2] + transparency * existing_color[2]),
+                            ]
+ 
+                            # Atualiza o super buffer
+                            GL.super_buffer[y, x] = blended_color
+            GL.downsample()
+ 
     @staticmethod
-    def triangleSet(point, colors):
+    def transform_point(point):
+        """Aplica transformações a um ponto."""
+        ponto_homogeneo = np.array([point[0], point[1], point[2], 1])
+        # Aplica transformações
+        matriz_modelo = GL.matrizes['transform_in'][-1]
+        ponto_transformado = matriz_modelo @ ponto_homogeneo
+        ponto_camera = GL.matrizes['viewpoint'] @ ponto_transformado
+        ponto_perspectiva = GL.matrizes['perspective'] @ ponto_camera
+        ponto_normalizado = ponto_perspectiva / ponto_perspectiva[3]
+        # Converte para coordenadas de tela
+        x_ndc = ponto_normalizado[0]
+        y_ndc = ponto_normalizado[1]
+        z_ndc = ponto_normalizado[2]
+        x_tela = (x_ndc + 1) * GL.width * 0.5
+        y_tela = (1 - y_ndc) * GL.height * 0.5
+        return [x_tela, y_tela, z_ndc]
+ 
+    @staticmethod
+    def triangleSet(point, colors, vertex_colors=None):
         """Função usada para renderizar TriangleSet."""
         # https://www.web3d.org/specifications/X3Dv4/ISO-IEC19775-1v4-IS/Part01/components/rendering.html#TriangleSet
         # Nessa função você receberá pontos no parâmetro point, esses pontos são uma lista
@@ -215,45 +268,33 @@ class GL:
         # inicialmente, para o TriangleSet, o desenho das linhas com a cor emissiva
         # (emissiveColor), conforme implementar novos materias você deverá suportar outros
         # tipos de cores.
-
+ 
         # O print abaixo é só para vocês verificarem o funcionamento, DEVE SER REMOVIDO.
         #print("TriangleSet : pontos = {0}".format(point)) # imprime no terminal pontos
         #print("TriangleSet : colors = {0}".format(colors)) # imprime no terminal as cores
-
+ 
         # Exemplo de desenho de um pixel branco na coordenada 10, 10
         #gpu.GPU.draw_pixel([10, 10], gpu.GPU.RGB8, [255, 255, 255])  # altera pixel
-
-
-            # Lista para armazenar as coordenadas transformadas para a chamada de triangleSet2D
-        lista_tri = []
-
-        for i in range(0, len(point) - 2, 3):
-            ponto_homogeneo = np.array([[point[i]], [point[i + 1]], [point[i + 2]], [1]])
-            ponto_transformado = np.matmul(GL.matrizes['transform_in'][-1], ponto_homogeneo)
-            ponto_camera = np.matmul(GL.matrizes['viewpoint'], ponto_transformado)
-            ponto_perspectiva = np.matmul(GL.matrizes['perspective'], ponto_camera)
-            ponto_normalizado = ponto_perspectiva / ponto_perspectiva[3]
-
-            matriz_tela = np.array([
-                [GL.width / 2, 0, 0, GL.width / 2],
-                [0, -GL.height / 2, 0, GL.height / 2],
-                [0, 0, 1, 0],
-                [0, 0, 0, 1]
-            ])
-            ponto_tela = np.matmul(matriz_tela, ponto_normalizado)
-            lista_tri.extend([ponto_tela[0][0], ponto_tela[1][0]])
-
-        GL.triangleSet2D(lista_tri, colors)
-
-
-
+ 
+        vertices = []
+        z_values = []
+ 
+        # Aplica transformações em cada ponto
+        for i in range(0, len(point), 3):
+            transformed = GL.transform_point(point[i:i + 3])
+            vertices.extend([transformed[0], transformed[1]])
+            z_values.append(transformed[2])
+ 
+        # Passa cores por vértice se disponíveis
+        GL.triangleSet2D(vertices, colors, vertex_colors, z_values)
+ 
     @staticmethod
     def viewpoint(position, orientation, fieldOfView):
         """Função usada para renderizar (na verdade coletar os dados) de Viewpoint."""
         # Na função de viewpoint você receberá a posição, orientação e campo de visão da
         # câmera virtual. Use esses dados para poder calcular e criar a matriz de projeção
         # perspectiva para poder aplicar nos pontos dos objetos geométricos.
-
+ 
         # O print abaixo é só para vocês verificarem o funcionamento, DEVE SER REMOVIDO.
         # Matrizes de translação e rotação invertidas para a câmera
         matriz_translacao_inversa = np.array([
@@ -262,40 +303,39 @@ class GL:
             [0, 0, 1, -position[2]],
             [0, 0, 0, 1]
         ])
-
+ 
         # Calcular rotação usando quaternion
-        angulo_meio = orientation[3] / 2
-        magnitude_eixo = np.sqrt(orientation[0]**2 + orientation[1]**2 + orientation[2]**2)
-        cos_angulo = np.cos(angulo_meio)
-        sin_angulo = np.sin(angulo_meio)
-        componente_x = sin_angulo * (orientation[0] / magnitude_eixo)
-        componente_y = sin_angulo * (orientation[1] / magnitude_eixo)
-        componente_z = sin_angulo * (orientation[2] / magnitude_eixo)
-
+        angulo = orientation[3]
+        eixo = np.array([orientation[0], orientation[1], orientation[2]])
+        eixo = eixo / np.linalg.norm(eixo)
+        cos_ang = np.cos(angulo)
+        sin_ang = np.sin(angulo)
+        ux, uy, uz = eixo
+ 
         matriz_rotacao_inversa = np.array([
-            [1 - 2 * (componente_y**2 + componente_z**2), 2 * (componente_x * componente_y - componente_z * cos_angulo), 2 * (componente_x * componente_z + componente_y * cos_angulo), 0],
-            [2 * (componente_x * componente_y + componente_z * cos_angulo), 1 - 2 * (componente_x**2 + componente_z**2), 2 * (componente_y * componente_z - componente_x * cos_angulo), 0],
-            [2 * (componente_x * componente_z - componente_y * cos_angulo), 2 * (componente_y * componente_z + componente_x * cos_angulo), 1 - 2 * (componente_x**2 + componente_y**2), 0],
+            [cos_ang + ux ** 2 * (1 - cos_ang), ux * uy * (1 - cos_ang) - uz * sin_ang, ux * uz * (1 - cos_ang) + uy * sin_ang, 0],
+            [uy * ux * (1 - cos_ang) + uz * sin_ang, cos_ang + uy ** 2 * (1 - cos_ang), uy * uz * (1 - cos_ang) - ux * sin_ang, 0],
+            [uz * ux * (1 - cos_ang) - uy * sin_ang, uz * uy * (1 - cos_ang) + ux * sin_ang, cos_ang + uz ** 2 * (1 - cos_ang), 0],
             [0, 0, 0, 1]
         ])
-
-        # Matrizes de visualização e projeção
-        matriz_visualizacao = np.matmul(matriz_rotacao_inversa, matriz_translacao_inversa)
-
-        fov_vertical = 2 * math.atan(math.tan(fieldOfView / 2) * (GL.height / math.sqrt(GL.height**2 + GL.width**2)))
-        topo = GL.near * math.tan(fov_vertical)
-        direita = topo * (GL.width / GL.height)
-
-        matriz_projecao = np.array([
-            [GL.near / direita, 0, 0, 0],
-            [0, GL.near / topo, 0, 0],
-            [0, 0, -(GL.far + GL.near) / (GL.far - GL.near), -2 * GL.far * GL.near / (GL.far - GL.near)],
+ 
+        # Matriz de visualização
+        GL.matrizes['viewpoint'] = matriz_rotacao_inversa @ matriz_translacao_inversa
+ 
+        # Matriz de projeção perspectiva
+        aspect = GL.width / GL.height
+        fovy = fieldOfView
+        f = 1 / math.tan(fovy / 2)
+        near = GL.near
+        far = GL.far
+ 
+        GL.matrizes['perspective'] = np.array([
+            [f / aspect, 0, 0, 0],
+            [0, f, 0, 0],
+            [0, 0, (far + near) / (near - far), (2 * far * near) / (near - far)],
             [0, 0, -1, 0]
         ])
-
-        GL.matrizes['viewpoint'] = matriz_visualizacao
-        GL.matrizes['perspective'] = matriz_projecao
-
+ 
     @staticmethod
     def transform_in(translation, scale, rotation):
         """Função usada para renderizar (na verdade coletar os dados) de Transform."""
@@ -305,10 +345,10 @@ class GL:
         # coordenadas e finalmente a rotação por [x, y, z, t] sendo definida pela rotação
         # do objeto ao redor do eixo x, y, z por t radianos, seguindo a regra da mão direita.
         # Quando se entrar em um nó transform se deverá salvar a matriz de transformação dos
-        # modelos do mundo para depois potencialmente usar em outras chamadas. 
+        # modelos do mundo para depois potencialmente usar em outras chamadas.
         # Quando começar a usar Transforms dentre de outros Transforms, mais a frente no curso
         # Você precisará usar alguma estrutura de dados pilha para organizar as matrizes.
-
+ 
         # O print abaixo é só para vocês verificarem o funcionamento, DEVE SER REMOVIDO.
         # Matrizes de translação e escala
         matriz_translacao = np.array([
@@ -317,36 +357,33 @@ class GL:
             [0, 0, 1, translation[2]],
             [0, 0, 0, 1]
         ])
-
+ 
         matriz_escala = np.array([
             [scale[0], 0, 0, 0],
             [0, scale[1], 0, 0],
             [0, 0, scale[2], 0],
             [0, 0, 0, 1]
         ])
-
-        # Calcular rotação usando quaternion
-        angulo_meio = rotation[3] / 2
-        magnitude_eixo = np.sqrt(rotation[0]**2 + rotation[1]**2 + rotation[2]**2)
-        cos_angulo = np.cos(angulo_meio)
-        sin_angulo = np.sin(angulo_meio)
-        componente_x = sin_angulo * (rotation[0] / magnitude_eixo)
-        componente_y = sin_angulo * (rotation[1] / magnitude_eixo)
-        componente_z = sin_angulo * (rotation[2] / magnitude_eixo)
-
+ 
+        angulo = rotation[3]
+        eixo = np.array([rotation[0], rotation[1], rotation[2]])
+        eixo = eixo / np.linalg.norm(eixo)
+        cos_ang = np.cos(angulo)
+        sin_ang = np.sin(angulo)
+        ux, uy, uz = eixo
+ 
         matriz_rotacao = np.array([
-            [1 - 2 * (componente_y**2 + componente_z**2), 2 * (componente_x * componente_y - componente_z * cos_angulo), 2 * (componente_x * componente_z + componente_y * cos_angulo), 0],
-            [2 * (componente_x * componente_y + componente_z * cos_angulo), 1 - 2 * (componente_x**2 + componente_z**2), 2 * (componente_y * componente_z - componente_x * cos_angulo), 0],
-            [2 * (componente_x * componente_z - componente_y * cos_angulo), 2 * (componente_y * componente_z + componente_x * cos_angulo), 1 - 2 * (componente_x**2 + componente_y**2), 0],
+            [cos_ang + ux ** 2 * (1 - cos_ang), ux * uy * (1 - cos_ang) - uz * sin_ang, ux * uz * (1 - cos_ang) + uy * sin_ang, 0],
+            [uy * ux * (1 - cos_ang) + uz * sin_ang, cos_ang + uy ** 2 * (1 - cos_ang), uy * uz * (1 - cos_ang) - ux * sin_ang, 0],
+            [uz * ux * (1 - cos_ang) - uy * sin_ang, uz * uy * (1 - cos_ang) + ux * sin_ang, cos_ang + uz ** 2 * (1 - cos_ang), 0],
             [0, 0, 0, 1]
         ])
-
+ 
         # Matriz de transformação completa
-        matriz_transformacao = np.matmul(matriz_translacao, np.matmul(matriz_rotacao, matriz_escala))
-
-        GL.matrizes['transform_in'].append(np.matmul(GL.matrizes['transform_in'][-1], matriz_transformacao))
-        
-
+        matriz_transformacao = matriz_translacao @ matriz_rotacao @ matriz_escala
+        matriz_total = GL.matrizes['transform_in'][-1] @ matriz_transformacao
+        GL.matrizes['transform_in'].append(matriz_total)
+ 
     @staticmethod
     def transform_out():
         """Função usada para renderizar (na verdade coletar os dados) de Transform."""
@@ -354,14 +391,13 @@ class GL:
         # grafo de cena. Não são passados valores, porém quando se sai de um nó transform se
         # deverá recuperar a matriz de transformação dos modelos do mundo da estrutura de
         # pilha implementada.
-
+ 
         # O print abaixo é só para vocês verificarem o funcionamento, DEVE SER REMOVIDO.
-        
-
+       
         GL.matrizes['transform_in'].pop()
-
+ 
     @staticmethod
-    def triangleStripSet(point, stripCount, colors):
+    def triangleStripSet(point, stripCount, colors, vertex_colors=None):
         """Função usada para renderizar TriangleStripSet."""
         # https://www.web3d.org/specifications/X3Dv4/ISO-IEC19775-1v4-IS/Part01/components/rendering.html#TriangleStripSet
         # A função triangleStripSet é usada para desenhar tiras de triângulos interconectados,
@@ -374,31 +410,36 @@ class GL:
         # primeiro triângulo será com os vértices 0, 1 e 2, depois serão os vértices 1, 2 e 3,
         # depois 2, 3 e 4, e assim por diante. Cuidado com a orientação dos vértices, ou seja,
         # todos no sentido horário ou todos no sentido anti-horário, conforme especificado.
-
+ 
         current_index = 0
-    
         for strip in stripCount:
             for t in range(strip - 2):
+                idxs = []
                 if t % 2 == 0:
-                    v1 = current_index + t * 3
-                    v2 = current_index + (t + 1) * 3
-                    v3 = current_index + (t + 2) * 3
+                    idxs = [current_index + t, current_index + t + 1, current_index + t + 2]
                 else:
-                    v1 = current_index + t * 3
-                    v2 = current_index + (t + 2) * 3
-                    v3 = current_index + (t + 1) * 3
-
-                triangle_vertices = [
-                    point[v1], point[v1 + 1], point[v1 + 2],
-                    point[v2], point[v2 + 1], point[v2 + 2],
-                    point[v3], point[v3 + 1], point[v3 + 2]
-                ]
-                GL.triangleSet(triangle_vertices, colors)
-
-            current_index += strip * 3
-
+                    idxs = [current_index + t + 1, current_index + t, current_index + t + 2]
+ 
+                triangle_vertices = []
+                z_values = []
+                for idx in idxs:
+                    v = point[idx * 3: idx * 3 + 3]
+                    transformed = GL.transform_point(v)
+                    triangle_vertices.extend([transformed[0], transformed[1]])
+                    z_values.append(transformed[2])
+ 
+                # Passa cores por vértice se disponíveis
+                if vertex_colors:
+                    vc = vertex_colors[idx * 3: idx * 3 + 9]
+                else:
+                    vc = None
+ 
+                GL.triangleSet2D(triangle_vertices, colors, vc, z_values)
+ 
+            current_index += strip
+ 
     @staticmethod
-    def indexedTriangleStripSet(point, index, colors):
+    def indexedTriangleStripSet(point, index, colors, vertex_colors=None, colorIndex=None):
         """Função usada para renderizar IndexedTriangleStripSet."""
         # https://www.web3d.org/specifications/X3Dv4/ISO-IEC19775-1v4-IS/Part01/components/rendering.html#IndexedTriangleStripSet
         # A função indexedTriangleStripSet é usada para desenhar tiras de triângulos
@@ -412,32 +453,49 @@ class GL:
         # primeiro triângulo será com os vértices 0, 1 e 2, depois serão os vértices 1, 2 e 3,
         # depois 2, 3 e 4, e assim por diante. Cuidado com a orientação dos vértices, ou seja,
         # todos no sentido horário ou todos no sentido anti-horário, conforme especificado.
-
+ 
         # O print abaixo é só para vocês verificarem o funcionamento, DEVE SER REMOVIDO.
-        vertices = []
-
-        new_points = [point[i:i+3] for i in range(0, len(point), 3)]
-
+       
+        GL.colorPerVertex = True if vertex_colors else False
+ 
         i = 0
-        while i < len(index) - 2:
-            if index[i] == -1 or index[i + 1] == -1 or index[i + 2] == -1:
-                i += 1  
-                continue
-            v1 = index[i]
-            v2 = index[i + 1]
-            v3 = index[i + 2]
-            if (i % 2 == 0):
-                # Ordem direta
-                vertices.extend(new_points[v1] + new_points[v2] + new_points[v3])
-            else:
-                # Ordem inversa
-                vertices.extend(new_points[v1] + new_points[v3] + new_points[v2])
-
-            # Incrementa para o próximo triângulo
-            i += 1
-
-        GL.triangleSet(vertices, colors)
-
+        while i < len(index):
+            strip_indices = []
+            while i < len(index) and index[i] != -1:
+                strip_indices.append(index[i])
+                i += 1
+            i += 1  # Pula o -1
+ 
+            # Gera triângulos a partir da strip
+            for j in range(len(strip_indices) - 2):
+                idxs = []
+                if j % 2 == 0:
+                    idxs = [strip_indices[j], strip_indices[j + 1], strip_indices[j + 2]]
+                else:
+                    idxs = [strip_indices[j + 1], strip_indices[j], strip_indices[j + 2]]
+ 
+                triangle_vertices = []
+                z_values = []
+                vertex_colors_list = []
+                for idx in idxs:
+                    v = point[idx * 3: idx * 3 + 3]
+                    transformed = GL.transform_point(v)
+                    triangle_vertices.extend([transformed[0], transformed[1]])
+                    z_values.append(transformed[2])
+ 
+                    if vertex_colors:
+                        if colorIndex:
+                            color_idx = colorIndex[idx] * 3
+                        else:
+                            color_idx = idx * 3
+                        vc = vertex_colors[color_idx: color_idx + 3]
+                        vertex_colors_list.extend(vc)
+ 
+                if GL.colorPerVertex:
+                    GL.triangleSet2D(triangle_vertices, colors, vertex_colors_list, z_values)
+                else:
+                    GL.triangleSet2D(triangle_vertices, colors, None, z_values)
+ 
     @staticmethod
     def indexedFaceSet(coord, coordIndex, colorPerVertex, color, colorIndex,
                        texCoord, texCoordIndex, colors, current_texture):
@@ -462,38 +520,45 @@ class GL:
         # textura para o poligono, para isso, use as coordenadas de textura e depois aplique a
         # cor da textura conforme a posição do mapeamento. Dentro da classe GPU já está
         # implementadado um método para a leitura de imagens.
-
+ 
         # Os prints abaixo são só para vocês verificarem o funcionamento, DEVE SER REMOVIDO.
-        coordenadas = [(coord[i], coord[i + 1], coord[i + 2]) for i in range(0, len(coord), 3)]
-
-        index = None
-    
+ 
+        GL.colorPerVertex = colorPerVertex
+        vertex_colors = color if colorPerVertex else None
+ 
         i = 0
-        while i < len(coordIndex) - 1:
-            if coordIndex[i] == -1:
-                index = None
+        while i < len(coordIndex):
+            face_indices = []
+            while i < len(coordIndex) and coordIndex[i] != -1:
+                face_indices.append(coordIndex[i])
                 i += 1
-                continue
+            i += 1  
 
-            if index is None:
-                index = coordIndex[i]
-                i += 1
-                continue
-
-            c0 = coordenadas[index]
-            c1 = coordenadas[coordIndex[i]]
-            c2 = coordenadas[coordIndex[i + 1]]
-
-            triangle_vertices = [
-                *c0,  
-                *c1,  
-                *c2  
-            ]
-
-            GL.triangleSet(triangle_vertices, colors)
-            i += 1
-
-
+            for j in range(1, len(face_indices) - 1):
+                idxs = [face_indices[0], face_indices[j], face_indices[j + 1]]
+ 
+                triangle_vertices = []
+                z_values = []
+                vertex_colors_list = []
+                for idx in idxs:
+                    v = coord[idx * 3: idx * 3 + 3]
+                    transformed = GL.transform_point(v)
+                    triangle_vertices.extend([transformed[0], transformed[1]])
+                    z_values.append(transformed[2])
+ 
+                    if GL.colorPerVertex:
+                        if colorIndex and len(colorIndex) > idx:
+                            color_idx = colorIndex[idx] * 3
+                        else:
+                            color_idx = idx * 3
+                        vc = vertex_colors[color_idx: color_idx + 3]
+                        vertex_colors_list.extend(vc)
+ 
+                if GL.colorPerVertex:
+                    GL.triangleSet2D(triangle_vertices, colors, vertex_colors_list, z_values)
+                else:
+                    GL.triangleSet2D(triangle_vertices, colors, None, z_values)
+ 
     @staticmethod
     def box(size, colors):
         """Função usada para renderizar Boxes."""
