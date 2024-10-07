@@ -153,61 +153,61 @@ class GL:
         # quantidade de pontos é sempre multiplo de 3, ou seja, 6 valores ou 12 valores, etc.
         # O parâmetro colors é um dicionário com os tipos cores possíveis, para o TriangleSet2D
         # você pode assumir inicialmente o desenho das linhas com a cor emissiva (emissiveColor).
-        print(vertices)
-        print(vertex_colors)
+        
         emissive_color = [int(c * 255) for c in colors.get('emissiveColor', [1, 1, 1])]
         transparency = colors.get('transparency', 0)
         opacity = 1 - transparency
- 
+
         factor = GL.supersampling_factor
- 
+
         # Processa cada triângulo
         for i in range(0, len(vertices) - 5, 6):
             # Extrai vértices do triângulo
             x0, y0 = vertices[i], vertices[i + 1]
             x1, y1 = vertices[i + 2], vertices[i + 3]
             x2, y2 = vertices[i + 4], vertices[i + 5]
- 
-            # Se cores por vértice forem fornecidas
-            if vertex_colors:
-                c0 = [int(c * 255) for c in vertex_colors[i:i + 3]]
-                c1 = [int(c * 255) for c in vertex_colors[i + 3:i + 6]]
-                c2 = [int(c * 255) for c in vertex_colors[i + 6:i + 9]]
+
+            # Verifica se há cores por vértice suficientes
+            if vertex_colors and len(vertex_colors) >= ((i // 6) * 9) + 9:
+                idx = (i // 6) * 9
+                c0 = [int(c * 255) for c in vertex_colors[idx:idx + 3]]
+                c1 = [int(c * 255) for c in vertex_colors[idx + 3:idx + 6]]
+                c2 = [int(c * 255) for c in vertex_colors[idx + 6:idx + 9]]
             else:
                 c0 = c1 = c2 = emissive_color
- 
+
             # Z-values
-            if z_values:
+            if z_values and len(z_values) >= (i // 6) * 3 + 3:
                 z0 = z_values[(i // 6) * 3]
                 z1 = z_values[(i // 6) * 3 + 1]
                 z2 = z_values[(i // 6) * 3 + 2]
             else:
                 z0 = z1 = z2 = 0
- 
-            # Coordenadas de supersampling
-            x0_s, y0_s = int(x0 * factor), int(y0 * factor)
-            x1_s, y1_s = int(x1 * factor), int(y1 * factor)
-            x2_s, y2_s = int(x2 * factor), int(y2 * factor)
- 
+
+            # Coordenadas de supersampling (ajuste)
+            x0_s, y0_s = int(round(x0 * factor)), int(round(y0 * factor))
+            x1_s, y1_s = int(round(x1 * factor)), int(round(y1 * factor))
+            x2_s, y2_s = int(round(x2 * factor)), int(round(y2 * factor))
+
             # Calcula a bounding box
             min_x = max(min(x0_s, x1_s, x2_s), 0)
             max_x = min(max(x0_s, x1_s, x2_s), GL.super_width - 1)
             min_y = max(min(y0_s, y1_s, y2_s), 0)
             max_y = min(max(y0_s, y1_s, y2_s), GL.super_height - 1)
- 
-            # Precalcula áreas para coordenadas baricêntricas
-            area = ((y1_s - y2_s) * (x0_s - x2_s) + (x2_s - x1_s) * (y0_s - y2_s))
+
+            # Precalcula áreas para coordenadas baricêntricas (ajuste)
+            area = ((y1_s - y2_s) * (x0_s - x2_s) - (x1_s - x2_s) * (y0_s - y2_s))
             if area == 0:
                 continue  # Triângulo degenerado
- 
+
             # Itera sobre a bounding box
             for y in range(min_y, max_y + 1):
                 for x in range(min_x, max_x + 1):
                     # Calcula coordenadas baricêntricas
-                    w0 = ((y1_s - y2_s) * (x - x2_s) + (x2_s - x1_s) * (y - y2_s)) / area
-                    w1 = ((y2_s - y0_s) * (x - x2_s) + (x0_s - x2_s) * (y - y2_s)) / area
+                    w0 = ((y1_s - y2_s) * (x - x2_s) - (x1_s - x2_s) * (y - y2_s)) / area
+                    w1 = ((y2_s - y0_s) * (x - x2_s) - (x2_s - x0_s) * (y - y2_s)) / area
                     w2 = 1 - w0 - w1
- 
+
                     # Verifica se o ponto está dentro do triângulo
                     if w0 >= 0 and w1 >= 0 and w2 >= 0:
                         # Interpola cor
@@ -215,14 +215,14 @@ class GL:
                         g = w0 * c0[1] + w1 * c1[1] + w2 * c2[1]
                         b = w0 * c0[2] + w1 * c1[2] + w2 * c2[2]
                         color = [int(r), int(g), int(b)]
- 
+
                         # Interpola Z
                         z = w0 * z0 + w1 * z1 + w2 * z2
- 
+
                         # Teste do Z-buffer
                         if z < GL.z_buffer[y, x]:
                             GL.z_buffer[y, x] = z
- 
+
                             # Blending com transparência
                             existing_color = GL.super_buffer[y, x]
                             blended_color = [
@@ -230,11 +230,13 @@ class GL:
                                 int(opacity * color[1] + transparency * existing_color[1]),
                                 int(opacity * color[2] + transparency * existing_color[2]),
                             ]
- 
+
                             # Atualiza o super buffer
                             GL.super_buffer[y, x] = blended_color
-            GL.downsample()
- 
+
+        # Realiza o downsampling após processar todos os triângulos
+        GL.downsample()
+    
     @staticmethod
     def transform_point(point):
         """Aplica transformações a um ponto."""
@@ -526,8 +528,8 @@ class GL:
         # Os prints abaixo são só para vocês verificarem o funcionamento, DEVE SER REMOVIDO.
  
         GL.colorPerVertex = colorPerVertex
-        vertex_colors = color if colorPerVertex else None
- 
+        vertex_colors = color if colorPerVertex and color is not None else None
+
         i = 0
         while i < len(coordIndex):
             face_indices = []
@@ -538,7 +540,7 @@ class GL:
 
             for j in range(1, len(face_indices) - 1):
                 idxs = [face_indices[0], face_indices[j], face_indices[j + 1]]
- 
+
                 triangle_vertices = []
                 z_values = []
                 vertex_colors_list = []
@@ -547,16 +549,18 @@ class GL:
                     transformed = GL.transform_point(v)
                     triangle_vertices.extend([transformed[0], transformed[1]])
                     z_values.append(transformed[2])
- 
-                    if GL.colorPerVertex:
+
+                    if GL.colorPerVertex and vertex_colors is not None:
                         if colorIndex and len(colorIndex) > idx:
                             color_idx = colorIndex[idx] * 3
                         else:
                             color_idx = idx * 3
                         vc = vertex_colors[color_idx: color_idx + 3]
                         vertex_colors_list.extend(vc)
- 
-                
+                    else:
+                        # Use default emissive color
+                        vertex_colors_list = None
+
                 GL.triangleSet2D(triangle_vertices, colors, vertex_colors_list, z_values)
                 
  
