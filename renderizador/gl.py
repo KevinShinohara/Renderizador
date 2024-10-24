@@ -167,7 +167,7 @@ class GL:
         # O parâmetro colors é um dicionário com os tipos cores possíveis, para o TriangleSet2D
         # você pode assumir inicialmente o desenho das linhas com a cor emissiva (emissiveColor).
         # print()
-
+        #print(f"Vértices 2s: {vertices}")
         emissive_color = [int(c * 255) for c in colors.get('emissiveColor', [1, 1, 1])]
         transparency = colors.get('transparency', 0)
         opacity = 1 - transparency
@@ -291,8 +291,8 @@ class GL:
         y_tela = (1 - y_ndc) * GL.height * 0.5
         z_depth = (z_ndc + 1) * 0.5  
 
-        # print(f"Vértice original: {point}")
-        # print(f"Vértice transformado: x={x_tela}, y={y_tela}, z={z_depth}")
+        #print(f"Vértice original: {point}")
+        #print(f"Vértice transformado: x={x_tela}, y={y_tela}, z={z_depth}")
 
         return [x_tela, y_tela, z_depth]
  
@@ -624,22 +624,52 @@ class GL:
  
     @staticmethod
     def box(size, colors):
-        """Função usada para renderizar Boxes."""
-        # https://www.web3d.org/specifications/X3Dv4/ISO-IEC19775-1v4-IS/Part01/components/geometry3D.html#Box
-        # A função box é usada para desenhar paralelepípedos na cena. O Box é centrada no
-        # (0, 0, 0) no sistema de coordenadas local e alinhado com os eixos de coordenadas
-        # locais. O argumento size especifica as extensões da caixa ao longo dos eixos X, Y
-        # e Z, respectivamente, e cada valor do tamanho deve ser maior que zero. Para desenha
-        # essa caixa você vai provavelmente querer tesselar ela em triângulos, para isso
-        # encontre os vértices e defina os triângulos.
+       """Função usada para renderizar Boxes."""
+       # https://www.web3d.org/specifications/X3Dv4/ISO-IEC19775-1v4-IS/Part01/components/geometry3D.html#Box
+       # A função box é usada para desenhar paralelepípedos na cena. O Box é centrada no
+       # (0, 0, 0) no sistema de coordenadas local e alinhado com os eixos de coordenadas
+       # locais. O argumento size especifica as extensões da caixa ao longo dos eixos X, Y
+       # e Z, respectivamente, e cada valor do tamanho deve ser maior que zero. Para desenha
+       # essa caixa você vai provavelmente querer tesselar ela em triângulos, para isso
+       # encontre os vértices e defina os triângulos.
 
-        # O print abaixo é só para vocês verificarem o funcionamento, DEVE SER REMOVIDO.
-        print("Box : size = {0}".format(size)) # imprime no terminal pontos
-        print("Box : colors = {0}".format(colors)) # imprime no terminal as cores
+       # Dividimos o tamanho para obter a metade em cada eixo
+       x, y, z = size[0] / 2, size[1] / 2, size[2] / 2
+       vertices = []
 
-        # Exemplo de desenho de um pixel branco na coordenada 10, 10
-        gpu.GPU.draw_pixel([10, 10], gpu.GPU.RGB8, [255, 255, 255])  # altera pixel
+       # Definir os vértices do cubo
+       face_vertices = [
+            [x, -y, -z], [-x, -y, -z], [-x, y, -z], [x, y, -z],  # Face de trás (rotacionada)
+            [x, -y, z], [-x, -y, z], [-x, y, z], [x, y, z]       # Face da frente (rotacionada)
+        ]
+       
+       # Definir as faces do cubo usando os vértices
+       faces = [
+            [0, 1, 2, 3],  # Face de trás
+            [4, 5, 6, 7],  # Face da frente
+            [1, 5, 6, 2],  # Face da direita
+            [0, 4, 7, 3],  # Face da esquerda
+            [0, 1, 5, 4],  # Face de baixo
+            [3, 2, 6, 7],  # Face de cima
+            ]
+       
+       # Para cada face, desenhe dois triângulos
+       for face in faces:
+            # Primeiro triângulo
+            triangle1 = face_vertices[face[0]] + face_vertices[face[1]] + face_vertices[face[2]]
+            # Transformando os pontos
+            p1, p2, p3 = GL.transform_point(triangle1[:3]), GL.transform_point(triangle1[3:6]), GL.transform_point(triangle1[6:])
+            vertices.extend([p1[0], p1[1], p2[0], p2[1], p3[0], p3[1]])
 
+            # Segundo triângulo
+            triangle2 = face_vertices[face[0]] + face_vertices[face[2]] + face_vertices[face[3]]
+            # Transformando os pontos
+            p1, p2, p3 = GL.transform_point(triangle2[:3]), GL.transform_point(triangle2[3:6]), GL.transform_point(triangle2[6:])
+            vertices.extend([p1[0], p1[1], p2[0], p2[1], p3[0], p3[1]])
+       GL.triangleSet2D(vertices, colors)
+
+    
+    
     @staticmethod
     def sphere(radius, colors):
         """Função usada para renderizar Esferas."""
@@ -651,8 +681,53 @@ class GL:
         # os triângulos.
 
         # O print abaixo é só para vocês verificarem o funcionamento, DEVE SER REMOVIDO.
-        print("Sphere : radius = {0}".format(radius)) # imprime no terminal o raio da esfera
-        print("Sphere : colors = {0}".format(colors)) # imprime no terminal as cores
+        #print("Sphere : radius = {0}".format(radius)) # imprime no terminal o raio da esfera
+        #print("Sphere : colors = {0}".format(colors)) # imprime no terminal as cores
+
+        stacks = 10  # Número de divisões em latitudes
+        slices = 20  # Número de divisões em longitudes
+        vertices = []  # Lista para acumular os vértices
+
+        for i in range(stacks):
+            lat0 = math.pi * (-0.5 + (i / stacks))
+            z0 = radius * math.sin(lat0)
+            zr0 = radius * math.cos(lat0)
+
+            lat1 = math.pi * (-0.5 + ((i + 1) / stacks))
+            z1 = radius * math.sin(lat1)
+            zr1 = radius * math.cos(lat1)
+
+            for j in range(slices):
+                lng0 = 2 * math.pi * (j / slices)
+                x0 = math.cos(lng0)
+                y0 = math.sin(lng0)
+
+                lng1 = 2 * math.pi * ((j + 1) / slices)
+                x1 = math.cos(lng1)
+                y1 = math.sin(lng1)
+
+                # Triângulo 1
+                triangle1 = [
+                    zr0 * x0, zr0 * y0, z0,
+                    zr1 * x0, zr1 * y0, z1,
+                    zr1 * x1, zr1 * y1, z1
+                ]
+                # Transformar os pontos
+                p1, p2, p3 = GL.transform_point(triangle1[:3]), GL.transform_point(triangle1[3:6]), GL.transform_point(triangle1[6:])
+                vertices.extend([p1[0], p1[1], p2[0], p2[1], p3[0], p3[1]])
+
+                # Triângulo 2
+                triangle2 = [
+                    zr0 * x0, zr0 * y0, z0,
+                    zr1 * x1, zr1 * y1, z1,
+                    zr0 * x1, zr0 * y1, z0
+                ]
+                # Transformar os pontos
+                p1, p2, p3 = GL.transform_point(triangle2[:3]), GL.transform_point(triangle2[3:6]), GL.transform_point(triangle2[6:])
+                vertices.extend([p1[0], p1[1], p2[0], p2[1], p3[0], p3[1]])
+
+        # Agora, renderizamos todos os triângulos de uma só vez
+        GL.triangleSet2D(vertices, colors)
 
     @staticmethod
     def cone(bottomRadius, height, colors):
@@ -666,9 +741,48 @@ class GL:
         # encontre os vértices e defina os triângulos.
 
         # O print abaixo é só para vocês verificarem o funcionamento, DEVE SER REMOVIDO.
-        print("Cone : bottomRadius = {0}".format(bottomRadius)) # imprime no terminal o raio da base do cone
-        print("Cone : height = {0}".format(height)) # imprime no terminal a altura do cone
-        print("Cone : colors = {0}".format(colors)) # imprime no terminal as cores
+        slices = 20  # Divisões ao longo da circunferência
+        vertices = []  # Lista para acumular os vértices
+
+        # Cores emissivas
+        emissive_color = [int(c * 255) for c in colors.get('emissiveColor', [1, 1, 1])]
+
+        # Renderizando a base do cone
+        for i in range(slices):
+            theta1 = 2 * math.pi * (i / slices)
+            theta2 = 2 * math.pi * ((i + 1) / slices)
+
+            x1 = math.cos(theta1) * bottomRadius
+            z1 = math.sin(theta1) * bottomRadius
+            x2 = math.cos(theta2) * bottomRadius
+            z2 = math.sin(theta2) * bottomRadius
+
+            # Transformar os pontos
+            p1 = GL.transform_point([x1, 0, z1])
+            p2 = GL.transform_point([x2, 0, z2])
+            p3 = GL.transform_point([0, 0, 0])
+
+            
+            vertices.extend([p3[0], p3[1], p1[0], p1[1], p2[0], p2[1]])
+
+        
+        for i in range(slices):
+            theta1 = 2 * math.pi * (i / slices)
+            theta2 = 2 * math.pi * ((i + 1) / slices)
+
+            x1 = math.cos(theta1) * bottomRadius
+            z1 = math.sin(theta1) * bottomRadius
+            x2 = math.cos(theta2) * bottomRadius
+            z2 = math.sin(theta2) * bottomRadius
+
+            # Transformar os pontos
+            p1 = GL.transform_point([x1, 0, z1])
+            p2 = GL.transform_point([x2, 0, z2])
+            p3_top = GL.transform_point([0, height, 0])
+
+            # Triângulo para a lateral do cone
+            vertices.extend([p1[0], p1[1], p2[0], p2[1], p3_top[0], p3_top[1]])
+        GL.triangleSet2D(vertices, colors)
 
     @staticmethod
     def cylinder(radius, height, colors):
@@ -682,9 +796,62 @@ class GL:
         # encontre os vértices e defina os triângulos.
 
         # O print abaixo é só para vocês verificarem o funcionamento, DEVE SER REMOVIDO.
-        print("Cylinder : radius = {0}".format(radius)) # imprime no terminal o raio do cilindro
-        print("Cylinder : height = {0}".format(height)) # imprime no terminal a altura do cilindro
-        print("Cylinder : colors = {0}".format(colors)) # imprime no terminal as cores
+        stacks = 10  # Divisões ao longo da altura
+        slices = 20  # Divisões ao longo da circunferência
+        vertices = []
+
+        # Cores emissivas
+        emissive_color = [int(c * 255) for c in colors.get('emissiveColor', [1, 1, 1])]
+
+        # Renderizando os discos superior e inferior
+        for i in range(slices):
+            theta1 = 2 * math.pi * (i / slices)
+            theta2 = 2 * math.pi * ((i + 1) / slices)
+
+            x1 = math.cos(theta1) * radius
+            z1 = math.sin(theta1) * radius
+            x2 = math.cos(theta2) * radius
+            z2 = math.sin(theta2) * radius
+
+            # Ponto no espaço 3D
+            p1 = GL.transform_point([x1, 0, z1])
+            p2 = GL.transform_point([x2, 0, z2])
+            p3 = GL.transform_point([0, 0, 0])
+
+            # Base inferior
+            vertices.extend([p3[0], p3[1], p1[0], p1[1], p2[0], p2[1]])
+
+            p1_top = GL.transform_point([x1, height, z1])
+            p2_top = GL.transform_point([x2, height, z2])
+            p3_top = GL.transform_point([0, height, 0])
+
+            # Base superior
+            vertices.extend([p3_top[0], p3_top[1], p1_top[0], p1_top[1], p2_top[0], p2_top[1]])
+
+        # Renderizando a lateral do cilindro
+        for i in range(stacks):
+            for j in range(slices):
+                theta1 = 2 * math.pi * (j / slices)
+                theta2 = 2 * math.pi * ((j + 1) / slices)
+
+                x1 = math.cos(theta1) * radius
+                z1 = math.sin(theta1) * radius
+                x2 = math.cos(theta2) * radius
+                z2 = math.sin(theta2) * radius
+
+                y0 = (i / stacks) * height
+                y1 = ((i + 1) / stacks) * height
+
+                # Transformar os pontos
+                p1 = GL.transform_point([x1, y0, z1])
+                p2 = GL.transform_point([x2, y0, z2])
+                p3 = GL.transform_point([x1, y1, z1])
+                p4 = GL.transform_point([x2, y1, z2])
+
+                # Triângulos para as laterais do cilindro
+                vertices.extend([p1[0], p1[1], p2[0], p2[1], p3[0], p3[1]])
+                vertices.extend([p3[0], p3[1], p2[0], p2[1], p4[0], p4[1]])
+        GL.triangleSet2D(vertices, colors)
 
     @staticmethod
     def navigationInfo(headlight):
